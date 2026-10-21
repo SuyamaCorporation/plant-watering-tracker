@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>植物 水やり 管理ツール</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen font-sans">
+  <div class="max-w-2xl mx-auto px-4 py-10">
+    <header class="mb-8 text-center">
+      <h1 class="text-3xl font-bold text-white mb-1">植物 水やり 管理ツール</h1>
+      <p class="text-gray-400 text-sm">Plant Watering Tracker</p>
+    </header>
+
+    <!-- Add Plant Form -->
+    <div class="bg-gray-800 rounded-xl p-5 mb-6">
+      <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wide mb-4">植物を追加</h2>
+      <div class="grid grid-cols-2 gap-3 mb-3">
+        <div class="col-span-2">
+          <label for="plantName" class="block text-xs text-gray-400 mb-1">植物の名前</label>
+          <input
+            id="plantName"
+            type="text"
+            placeholder="例: ポトス、ミント、サボテン"
+            maxlength="30"
+            class="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+          />
+        </div>
+        <div>
+          <label for="plantType" class="block text-xs text-gray-400 mb-1">種類</label>
+          <select
+            id="plantType"
+            class="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+            aria-label="植物の種類"
+          >
+            <option value="多肉植物">多肉植物</option>
+            <option value="観葉植物">観葉植物</option>
+            <option value="ハーブ">ハーブ</option>
+            <option value="花">花</option>
+            <option value="野菜">野菜</option>
+          </select>
+        </div>
+        <div>
+          <label for="plantSeason" class="block text-xs text-gray-400 mb-1">季節</label>
+          <select
+            id="plantSeason"
+            class="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+            aria-label="現在の季節"
+          >
+            <option value="春夏">春夏（4〜9月）</option>
+            <option value="秋冬">秋冬（10〜3月）</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Suggested Interval Preview -->
+      <div id="intervalPreview" class="bg-gray-700/50 rounded-lg px-3 py-2 mb-3 text-xs text-gray-300">
+        推奨水やり間隔: <span id="intervalText" class="font-semibold text-green-400">—</span>
+      </div>
+
+      <div>
+        <label for="lastWatered" class="block text-xs text-gray-400 mb-1">最後に水やりした日</label>
+        <input
+          id="lastWatered"
+          type="date"
+          class="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+        />
+      </div>
+
+      <div id="addError" class="hidden text-red-400 text-xs mt-2 mb-1" role="alert" aria-live="polite"></div>
+
+      <button
+        id="addBtn"
+        class="w-full mt-3 bg-green-600 hover:bg-green-500 text-white font-semibold py-2 px-4 rounded-lg text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-green-400"
+      >
+        植物を追加
+      </button>
+    </div>
+
+    <!-- Plants List -->
+    <div id="plantsList" class="space-y-3"></div>
+    <div id="emptyMsg" class="text-center text-gray-500 py-12 text-sm hidden">
+      まだ植物が登録されていません。上のフォームから追加してください。
+    </div>
+  </div>
+
+  <script>
+    function escapeHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    const STORAGE_KEY = 'plant-watering-tracker-v1';
+
+    // Watering intervals in days: { type: { 春夏: days, 秋冬: days } }
+    const INTERVALS = {
+      '多肉植物': { '春夏': 14, '秋冬': 21 },
+      '観葉植物': { '春夏': 4,  '秋冬': 7  },
+      'ハーブ':   { '春夏': 2,  '秋冬': 4  },
+      '花':       { '春夏': 2,  '秋冬': 4  },
+      '野菜':     { '春夏': 2,  '秋冬': 3  },
+    };
+
+    let plants = [];
+
+    function loadPlants() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) plants = JSON.parse(raw);
+      } catch (e) { plants = []; }
+    }
+
+    function savePlants() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(plants));
+    }
+
+    function getSuggestedInterval(type, season) {
+      return (INTERVALS[type] && INTERVALS[type][season]) || 7;
+    }
+
+    function getDaysUntilWatering(lastWateredStr, intervalDays) {
+      if (!lastWateredStr) return 0;
+      const last = new Date(lastWateredStr);
+      const today = new Date();
+      today.setHours(0,0,0,0);
+      last.setHours(0,0,0,0);
+      const daysSince = Math.floor((today - last) / 86400000);
+      return intervalDays - daysSince;
+    }
+
+    function getStatus(daysUntil) {
+      if (daysUntil <= 0) return { label: '今日', color: 'bg-red-600', textColor: 'text-red-400' };
+      if (daysUntil === 1) return { label: '明日', color: 'bg-orange-500', textColor: 'text-orange-400' };
+      if (daysUntil <= 3) return { label: daysUntil + '日後', color: 'bg-yellow-500', textColor: 'text-yellow-400' };
+      return { label: daysUntil + '日後', color: 'bg-green-600', textColor: 'text-green-400' };
+    }
+
+    function render() {
+      const list = document.getElementById('plantsList');
+      const empty = document.getElementById('emptyMsg');
+      list.innerHTML = '';
+
+      if (plants.length === 0) {
+        empty.classList.remove('hidden');
+        return;
+      }
+      empty.classList.add('hidden');
+
+      plants.forEach((plant, i) => {
+        const interval = getSuggestedInterval(plant.type, plant.season);
+        const daysUntil = getDaysUntilWatering(plant.lastWatered, interval);
+        const status = getStatus(daysUntil);
+
+        const card = document.createElement('div');
+        card.className = 'bg-gray-800 border border-gray-700 rounded-xl p-4';
+        card.setAttribute('role', 'article');
+        card.setAttribute('aria-label', plant.name + ' 水やり状況');
+
+        // Top row
+        const topRow = document.createElement('div');
+        topRow.className = 'flex items-start justify-between mb-3';
+
+        const leftDiv = document.createElement('div');
+
+        const nameEl = document.createElement('div');
+        nameEl.className = 'text-base font-bold text-white mb-1';
+        nameEl.textContent = plant.name;
+
+        const metaEl = document.createElement('div');
+        metaEl.className = 'text-xs text-gray-400';
+        metaEl.textContent = plant.type + ' · ' + plant.season + ' · ' + interval + '日おきに水やり';
+
+        leftDiv.appendChild(nameEl);
+        leftDiv.appendChild(metaEl);
+
+        const badge = document.createElement('span');
+        badge.className = 'text-xs text-white px-2.5 py-1 rounded-full font-semibold flex-shrink-0 ' + status.color;
+        badge.textContent = status.label;
+        badge.setAttribute('aria-label', '次の水やりまで ' + status.label);
+
+        topRow.appendChild(leftDiv);
+        topRow.appendChild(badge);
+
+        // Bottom row
+        const botRow = document.createElement('div');
+        botRow.className = 'flex items-center justify-between';
+
+        const waterInfo = document.createElement('div');
+        waterInfo.className = 'text-xs text-gray-400';
+        waterInfo.textContent = plant.lastWatered
+          ? '最終水やり: ' + plant.lastWatered
+          : '水やり記録なし';
+
+        const btnGroup = document.createElement('div');
+        btnGroup.className = 'flex gap-2';
+
+        // Water today button
+        const waterBtn = document.createElement('button');
+        waterBtn.className = 'text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400';
+        waterBtn.textContent = '水やり済';
+        waterBtn.setAttribute('aria-label', plant.name + ' に水やりした');
+        waterBtn.addEventListener('click', () => {
+          plants[i].lastWatered = new Date().toISOString().slice(0, 10);
+          savePlants();
+          render();
+        });
+
+        // Delete button
+        const delBtn = document.createElement('button');
+        delBtn.className = 'text-xs bg-gray-700 hover:bg-red-700 text-gray-300 hover:text-white px-3 py-1.5 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-500';
+        delBtn.textContent = '削除';
+        delBtn.setAttribute('aria-label', plant.name + ' を削除');
+        delBtn.addEventListener('click', () => {
+          if (confirm(escapeHtml(plant.name) + ' を削除しますか？')) {
+            plants.splice(i, 1);
+            savePlants();
+            render();
+          }
+        });
+
+        btnGroup.appendChild(waterBtn);
+        btnGroup.appendChild(delBtn);
+        botRow.appendChild(waterInfo);
+        botRow.appendChild(btnGroup);
+
+        card.appendChild(topRow);
+        card.appendChild(botRow);
+        list.appendChild(card);
+      });
+    }
+
+    function updateIntervalPreview() {
+      const type = document.getElementById('plantType').value;
+      const season = document.getElementById('plantSeason').value;
+      const days = getSuggestedInterval(type, season);
+      const text = document.getElementById('intervalText');
+      text.textContent = days + '日おきに水やり';
+    }
+
+    document.getElementById('plantType').addEventListener('change', updateIntervalPreview);
+    document.getElementById('plantSeason').addEventListener('change', updateIntervalPreview);
+
+    document.getElementById('addBtn').addEventListener('click', () => {
+      const name = document.getElementById('plantName').value.trim();
+      const type = document.getElementById('plantType').value;
+      const season = document.getElementById('plantSeason').value;
+      const lastWatered = document.getElementById('lastWatered').value;
+      const errEl = document.getElementById('addError');
+
+      if (!name) {
+        errEl.textContent = '植物の名前を入力してください。';
+        errEl.classList.remove('hidden');
+        return;
+      }
+      errEl.classList.add('hidden');
+
+      plants.push({ name, type, season, lastWatered: lastWatered || '' });
+      savePlants();
+      render();
+
+      document.getElementById('plantName').value = '';
+      document.getElementById('lastWatered').value = '';
+    });
+
+    // Set default date to today
+    document.getElementById('lastWatered').value = new Date().toISOString().slice(0, 10);
+
+    // Auto-detect season based on current month
+    const month = new Date().getMonth() + 1;
+    document.getElementById('plantSeason').value = (month >= 4 && month <= 9) ? '春夏' : '秋冬';
+
+    loadPlants();
+    updateIntervalPreview();
+    render();
+  </script>
+</body>
+</html>
